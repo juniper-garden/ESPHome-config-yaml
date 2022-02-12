@@ -1,0 +1,196 @@
+esphome:
+  name: sensor
+  platform: ESP8266
+  board: d1_mini
+  name_add_mac_suffix: true
+
+http_request:
+  useragent: esphome/device
+  timeout: 10s
+
+wifi:
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ssid: WiFi_AP
+  password: WIFI_PWD
+  fast_connect: true
+  reboot_timeout: 0s
+
+  ap:
+    ssid: "Sensor Fallback Hotspot"
+    password: "bd6c0LQv9ZVL"
+    ap_timeout: 60min
+
+captive_portal:
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+
+web_server:
+  port: 5063
+
+time:
+  - platform: sntp
+    id: sntp_time
+
+ota:
+
+i2c:
+  sda: D3
+  scl: D4
+  scan: True
+  id: bus_a
+
+sensor:
+  - platform: bme280
+    i2c_id: bus_a
+    
+    temperature:
+      name: "BME280 Temperature"
+      id: bme280_temperature
+      oversampling: 16x
+      on_value:
+        then:
+          - http_request.send:
+              method: POST
+              url: https://ingestion.junipertechnology.co/sensor-ingest
+              verify_ssl: false
+              headers:
+                Content-Type: application/json
+              json: |-
+                root["id"] = "c2604063-dbf2-447a-9477-9e4116c73ed3";
+                root["timestamp"] = id(sntp_time).utcnow().timestamp;
+                JsonArray &readings = root.createNestedArray("readings");
+                JsonObject &reading = readings.createNestedObject();
+                reading["name"] = "temperature";
+                reading["unit"] = "C";
+                reading["value"] = id(bme280_temperature).state;
+                readings.add(reading);
+    pressure:
+      name: "BME280 Pressure"
+      id: bme280_pressure
+      on_value:
+        then:
+          - http_request.send:
+              method: POST
+              url: https://ingestion.junipertechnology.co/sensor-ingest
+              verify_ssl: false
+              headers:
+                Content-Type: application/json
+              json: |-
+                root["id"] = "c2604063-dbf2-447a-9477-9e4116c73ed3";
+                root["timestamp"] = id(sntp_time).utcnow().timestamp;
+                JsonArray &readings = root.createNestedArray("readings");
+                JsonObject &reading = readings.createNestedObject();
+                reading["name"] = "pressure";
+                reading["unit"] = "hPa";
+                reading["value"] = id(bme280_pressure).state;
+                readings.add(reading);
+    humidity:
+      name: "BME280 Relative Humidity"
+      id: bme280_humidity
+      on_value:
+        then:
+          - http_request.send:
+              method: POST
+              url: https://ingestion.junipertechnology.co/sensor-ingest
+              verify_ssl: false
+              headers:
+                Content-Type: application/json
+              json: |-
+                root["id"] = "c2604063-dbf2-447a-9477-9e4116c73ed3";
+                root["timestamp"] = id(sntp_time).utcnow().timestamp ;
+                JsonArray &readings = root.createNestedArray("readings");
+                JsonObject &reading = readings.createNestedObject();
+                reading["name"] = "humidity";
+                reading["unit"] = "%";
+                reading["value"] = id(bme280_humidity).state;
+                readings.add(reading);
+    address: 0x76
+    update_interval: 10s
+  - platform: template
+    name: "Altitude"
+    id: altitude
+    lambda: |-
+      const float STANDARD_SEA_LEVEL_PRESSURE = 1013.25; //in hPa, see note
+      return ((id(bme280_temperature).state + 273.15) / 0.0065) *
+        (powf((STANDARD_SEA_LEVEL_PRESSURE / id(bme280_pressure).state), 0.190234) - 1); // in meter
+    update_interval: 10s
+    icon: 'mdi:signal'
+    unit_of_measurement: 'm'
+    on_value:
+        then:
+          - http_request.send:
+              method: POST
+              url: https://ingestion.junipertechnology.co/sensor-ingest
+              verify_ssl: false
+              headers:
+                Content-Type: application/json
+              json: |-
+                root["id"] = "c2604063-dbf2-447a-9477-9e4116c73ed3";
+                root["timestamp"] = id(sntp_time).utcnow().timestamp ;
+                JsonArray &readings = root.createNestedArray("readings");
+                JsonObject &reading = readings.createNestedObject();
+                reading["name"] = "altitude";
+                reading["unit"] = "m";
+                reading["value"] = id(altitude).state;
+                readings.add(reading);
+
+  - platform: template
+    name: "Absolute Humidity"
+    id: absolute_humidity
+    lambda: |-
+      const float mw = 18.01534;    // molar mass of water g/mol
+      const float r = 8.31447215;   // Universal gas constant J/mol/K
+      return (6.112 * powf(2.718281828, (17.67 * id(bme280_temperature).state) /
+        (id(bme280_temperature).state + 243.5)) * id(bme280_humidity).state * mw) /
+        ((273.15 + id(bme280_temperature).state) * r); // in grams/m^3
+    accuracy_decimals: 2
+    update_interval: 10s
+    icon: 'mdi:water'
+    unit_of_measurement: 'g/m^3'
+    on_value:
+        then:
+          - http_request.send:
+              method: POST
+              url: https://ingestion.junipertechnology.co/sensor-ingest
+              verify_ssl: false
+              headers:
+                Content-Type: application/json
+              json: |-
+                root["id"] = "c2604063-dbf2-447a-9477-9e4116c73ed3";
+                root["timestamp"] = id(sntp_time).utcnow().timestamp ;
+                JsonArray &readings = root.createNestedArray("readings");
+                JsonObject &reading = readings.createNestedObject();
+                reading["name"] = "absolute_humidity";
+                reading["unit"] = "g/m^3";
+                reading["value"] = id(absolute_humidity).state;
+                readings.add(reading);
+  - platform: template
+    name: "Dew Point"
+    id: dew_point
+    lambda: |-
+      return (243.5*(log(id(bme280_humidity).state/100)+((17.67*id(bme280_temperature).state)/
+      (243.5+id(bme280_temperature).state)))/(17.67-log(id(bme280_humidity).state/100)-((17.67*id(bme280_temperature).state)/(243.5+id(bme280_temperature).state))));
+    unit_of_measurement: degC
+    icon: 'mdi:thermometer-alert'
+    update_interval: 10s
+    on_value:
+        then:
+          - http_request.send:
+              method: POST
+              url: https://ingestion.junipertechnology.co/sensor-ingest
+              verify_ssl: false
+              headers:
+                Content-Type: application/json
+              json: |-
+                root["id"] = "c2604063-dbf2-447a-9477-9e4116c73ed3";
+                root["timestamp"] = id(sntp_time).utcnow().timestamp ;
+                JsonArray &readings = root.createNestedArray("readings");
+                JsonObject &reading = readings.createNestedObject();
+                reading["name"] = "dew_point";
+                reading["unit"] = "C";
+                reading["value"] = id(dew_point).state;
+                readings.add(reading);
